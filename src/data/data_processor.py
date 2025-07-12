@@ -9,7 +9,6 @@ class AirQualityProcessor:
 
         Parameters:
         -----------
-        file_path (str): Path to the raw AirQualityUCI.csv file.
         target_pollutant (str): The name of the pollutant column to extract (e.g., 'NO2(GT)').
         start_date (str): The start date for the continuous subset (format 'DD/MM/YYYY').
         end_date (str): The end date for the continuous subset (format 'DD/MM/YYYY').
@@ -37,19 +36,72 @@ class AirQualityProcessor:
             decimal=','                                     # decimal separator for the dataset
         )
 
-        # combine Date and Time columns into a new temporary column
-        df['CombinedDateTime'] = df['Date'] + ' ' + df['Time']
+        # combine Date and Time columns into a single column to use it for indexing
+        df['DateTime'] = df['Date'] + ' ' + df['Time']
 
-        # add DateTime column with a datetime custom format
-        df['DateTime'] = pd.to_datetime(df['CombinedDateTime'], format='%d/%m/%Y %H.%M.%S')
+        # Convert the date and time columns to actual datetime objects
+        df['Date'] = pd.to_datetime(df['Date'], format='%d/%m/%Y')
+        df['Time'] = pd.to_datetime(df['Time'], format='%H.%M.%S')
+        df['DateTime'] = pd.to_datetime(df['DateTime'], format='%d/%m/%Y %H.%M.%S')
 
         df.set_index('DateTime', inplace=True)      # set the DateTime column to be the index column
         df.index.name = 'DateTime'                  # ensure the index has a name
         df.dropna(axis=1, how='all', inplace=True)  # drop all empty unnamed columns
         df.sort_index(inplace=True)                 # ensure index column is sorted
 
-        # drop the original Date and Time columns and the temporary column CombinedDateTime
-        df.drop(columns=['Date', 'Time', 'CombinedDateTime'], errors='ignore', inplace=True)
-
         print("Raw data loaded and initially parsed.")
         return df
+    
+    def get_target_time_series(self) -> pd.Series:
+        """
+        Gets the raw data only for the target pollutant
+        """
+        df = self.load_raw_data()
+
+        if self.target_pollutant not in df.columns:
+            raise ValueError(f"Target pollutant '{self.target_pollutant}' not found in the dataset columns: {df.columns.tolist()}")
+        
+        # filter the dataframe only for selected time period
+        start_dt = pd.to_datetime(self.start_date, format='%d/%m/%Y')
+        end_dt = pd.to_datetime(self.end_date, format='%d/%m/%Y')
+        df_filtered_time = df[(df['Date'] >= start_dt) & (df['Date'] <= end_dt)].copy()
+
+        # convert the target pollutant column to numeric
+        df_filtered_time[self.target_pollutant] = pd.to_numeric(
+            df_filtered_time[self.target_pollutant], errors='coerce') # invalid parsing set as NaN
+        
+        # drop rows with NaN's in the target pollutant column, overriding the dataframe
+        df_filtered_time.dropna(subset=[self.target_pollutant], inplace=True)
+
+        time_series = df_filtered_time[self.target_pollutant]
+
+        if time_series.empty:
+            raise ValueError(f"No data found for {self.target_pollutant} in the specified date range "
+                             f"({self.start_date} to {self.end_date}) after cleaning.")
+        
+        print(f"Data prepared for {self.target_pollutant} from {self.start_date} to {self.end_date}.")
+        print(f"Shape: {time_series.shape}, Missing values: {time_series.isnull().sum()}")
+        print("\nFirst 5 entries of prepared series:")
+        print(time_series.head())
+        print("\nLast 5 entries of prepared series:")
+        print(time_series.tail())
+
+
+        return time_series
+
+# For testing:
+if __name__ == '__main__':
+    from src.utils.config import TARGET_POLLUTANT, START_DATE, END_DATE
+    print("--- Testing AirQualityProcessor with NO2(GT) ---")
+    processor_no2 = AirQualityProcessor(
+        target_pollutant=TARGET_POLLUTANT,
+        start_date=START_DATE,
+        end_date=END_DATE
+    )
+    try:
+        no2_series = processor_no2.get_target_time_series()
+        print("\nNO2 Series Info:")
+        no2_series.info()
+
+    except (FileNotFoundError, ValueError, Exception) as e:
+        print(f"Error for NO2(GT) processing: {e}")
