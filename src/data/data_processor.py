@@ -36,7 +36,7 @@ class AirQualityProcessor:
             decimal=','                                     # decimal separator for the dataset
         )
 
-        # combine Date and Time columns into a single column to use it for indexing
+        # Combine Date and Time columns into a single column to use it for indexing
         df['DateTime'] = df['Date'] + ' ' + df['Time']
 
         # Convert the date and time columns to actual datetime objects
@@ -54,23 +54,29 @@ class AirQualityProcessor:
     
     def get_target_time_series(self) -> pd.Series:
         """
-        Gets the raw data only for the target pollutant
+        Loads raw data, performs initial cleaning, and extracts a specific pollutant time series,
+        filtered by date range.
+
+        Returns:
+        -----------
+        pd.Series: A pandas Series containing the cleaned and selected pollutant time series,
+                       with a datetime index.
         """
         df = self.load_raw_data()
 
         if self.target_pollutant not in df.columns:
             raise ValueError(f"Target pollutant '{self.target_pollutant}' not found in the dataset columns: {df.columns.tolist()}")
         
-        # filter the dataframe only for selected time period
+        # Filter the dataframe only for selected time period
         start_dt = pd.to_datetime(self.start_date, format='%d/%m/%Y')
         end_dt = pd.to_datetime(self.end_date, format='%d/%m/%Y')
         df_filtered_time = df[(df['Date'] >= start_dt) & (df['Date'] <= end_dt)].copy()
 
-        # convert the target pollutant column to numeric
+        # Convert the target pollutant column to numeric
         df_filtered_time[self.target_pollutant] = pd.to_numeric(
             df_filtered_time[self.target_pollutant], errors='coerce') # invalid parsing set as NaN
         
-        # drop rows with NaN's in the target pollutant column, overriding the dataframe
+        # Drop rows with NaN's in the target pollutant column, overriding the dataframe
         df_filtered_time.dropna(subset=[self.target_pollutant], inplace=True)
 
         time_series = df_filtered_time[self.target_pollutant]
