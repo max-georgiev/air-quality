@@ -1,9 +1,83 @@
-from sklearn.metrics import mean_squared_error
+import sys
+import os
+
+project_parent_path = os.path.abspath(os.getcwd())
+if project_parent_path not in sys.path:
+    sys.path.insert(0, project_parent_path)
+
+courselib_parent_path = os.path.abspath(os.path.join(os.getcwd(), "..", "AppliedML"))
+if courselib_parent_path not in sys.path:
+    sys.path.insert(0, courselib_parent_path)
+
+
+from courselib.utils.metrics import mean_squared_error, mean_absolute_error
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
+import math
 from src.features.feature_engineer import LagFeatureEngineer
-from sklearn.metrics import mean_absolute_error
+from src.data.data_processor import AirQualityProcessor
+from src.models.train_model_class import ModelEvaluator
+from src.models import train_model
+from src.utils.config import TARGET_POLLUTANT, START_DATE, END_DATE, LAG_DEPTH
+from courselib.models.linear_models import LinearRegression
+from courselib.optimizers import GDOptimizer
+
+# initialize processor
+processor = AirQualityProcessor(
+        target_pollutant=TARGET_POLLUTANT,
+        start_date=START_DATE,
+        end_date=END_DATE
+    )
+
+# get time series data
+time_series = processor.get_target_time_series()
+
+# assign optimizer
+optimizer = GDOptimizer()
+
+# lag values for testing
+lag_values = (1, 2, 3, 6, 9, 12, 24, 36, 48)
+def evaluate_lag_depth_effect_mine(lag_values):
+    results = {}    # to store results
+    for lag in lag_values:
+        feature_engineer = LagFeatureEngineer(lag_depth=lag) # initialize engineer
+        df_lagged = feature_engineer.prepare_supervised_data(time_series) # get lagged matrix and vector
+
+        courselib_lr_model = LinearRegression(w=np.zeros(lag), b=0.0, optimizer=optimizer) # assign model
+
+        evaluator = ModelEvaluator(df_lagged) # initialize evaluator
+
+        evaluator.evaluate_model(
+            "Linear Regression (courselib)", 
+            courselib_lr_model, 
+            is_courselib_model=True,
+            num_epochs=2000, 
+            batch_size=32, 
+            compute_metrics=True, 
+            metrics_dict={
+                "RMSE": lambda y_true, y_pred: math.sqrt(mean_squared_error(y_pred, y_true)),
+                "MAE": mean_absolute_error
+            }
+        )
+
+        rmse = evaluator.get_metric_for_model("Linear Regression (courselib)", "rmse")
+
+        results[lag] = rmse
+    
+    plt.plot(list(results.keys()), list(results.values()), marker='o')
+    plt.xlabel("Lag Depth (k)")
+    plt.ylabel("Test RMSE")
+    plt.title("Lag Depth vs. Model Performance")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+    return results
+
+
+evaluate_lag_depth_effect_mine(lag_values)
+
 
 
 
