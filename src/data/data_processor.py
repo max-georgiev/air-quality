@@ -9,9 +9,12 @@ class AirQualityProcessor:
 
         Parameters:
         -----------
-        target_pollutant (str): The name of the pollutant column to extract (e.g., 'NO2(GT)').
-        start_date (str): The start date for the continuous subset (format 'DD/MM/YYYY').
-        end_date (str): The end date for the continuous subset (format 'DD/MM/YYYY').
+        target_pollutant : str
+            The name of the pollutant column to extract (e.g., 'NO2(GT)').
+        start_date : str
+            The start date for the continuous subset (format 'DD/MM/YYYY').
+        end_date : str
+            The end date for the continuous subset (format 'DD/MM/YYYY').
         """
 
         self.file_path = RAW_DATA_PATH
@@ -59,8 +62,8 @@ class AirQualityProcessor:
 
         Returns:
         -----------
-        pd.Series: A pandas Series containing the cleaned and selected pollutant time series,
-                       with a datetime index.
+        time_series : pd.Series
+            A pandas Series containing the cleaned and selected pollutant time series, with a datetime index.
         """
         df = self.load_raw_data()
 

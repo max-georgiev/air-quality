@@ -13,14 +13,15 @@ class LagFeatureEngineer:
 
         Parameters:
         -----------
-            lag_depth (int): The number (k) of past observations to use as features.
-                             E.g., if lag_depth=24, it will create lag_1, ..., lag_24 features.
+        lag_depth : int 
+            The number (k) of past observations to use as features.
+                E.g., if lag_depth=24, it will create lag_1, ..., lag_24 features.
         """
         if not isinstance(lag_depth, int) or lag_depth <= 0:
             raise ValueError("lag_depth must be a positive integer.")
         self.lag_depth = lag_depth
 
-    def prepare_supervised_data(self, series: pd.Series) -> tuple[pd.DataFrame, pd.Series]:
+    def prepare_supervised_data(self, series: pd.Series, return_separate=False):
         """
         Generates lagged features matrix (X) and the corresponding target vector (y)
         from the input time series.
@@ -30,12 +31,17 @@ class LagFeatureEngineer:
 
         Parameters:
         -----------
-        series (pd.Series): The input time series (i.e., target pollutant values).
-                            It must have a DatetimeIndex.
+        series : pd.Series
+            The input time series (i.e., target pollutant values).
+                It must have a DatetimeIndex.
+
+        return_separate : bool
+            If True, returns the lagged features matrix X and the target vector y as separate DataFrames
 
         Returns:
-        -----------
-        tuple[pd.DataFrame, pd.Series]: A tuple containing:
+        --------
+        X, y : tuple[pd.DataFrame, pd.Series]
+            A tuple containing:
             - X (pd.DataFrame): The feature matrix (n x k).
             - y (pd.Series): The target vector (n).
             The indices of X and y will be aligned and correspond to the prediction timestamp.
@@ -44,9 +50,8 @@ class LagFeatureEngineer:
         if len(series) <= self.lag_depth:
             raise ValueError(f"Series length ({len(series)}) must be greater than lag_depth ({self.lag_depth}) to create features.")
 
-
-        df = pd.DataFrame(series)           # create a dataframe from the time series
-        df.columns = ['original_value']     # rename the column with the time series values
+        df = pd.DataFrame(series)       # create a dataframe from the time series
+        df.columns = ['Target']         # rename the column with the time series values
 
         print(f"Generating {self.lag_depth} lag features and aligning target vector...")
         
@@ -54,22 +59,26 @@ class LagFeatureEngineer:
             col_name = f'lag_{i}'
             # Add a new column which is the original series shifted by i values downwards,
             # i.e., remove the i last values of the series, corresponding to i lags
-            df[col_name] = df['original_value'].shift(i)
+            df[col_name] = df['Target'].shift(i)
 
         # Remove all rows without values (resulting from shifting).
         # This way, in the dataframe only the lagged values remain
         df_features = df.dropna(axis=0)
-        y = df_features['original_value']
-        X = df_features.drop(columns=['original_value'])
+
+        if return_separate:
+            y = df_features['Target']
+            X = df_features.drop(columns=['Target'])
         
-        if X.empty or y.empty: # Check after all processing
-            raise ValueError("After generating lags and dropping NaNs, no valid data points remain. "
-                             "Check series length and lag_depth.")
+            if X.empty or y.empty: # Check after all processing
+                raise ValueError("After generating lags and dropping NaNs, no valid data points remain. "
+                                    "Check series length and lag_depth.")
         
-        print(f"Feature matrix (X) shape: {X.shape}")
-        print(f"Target vector (y) shape: {y.shape}")
+            print(f"Feature matrix (X) shape: {X.shape}")
+            print(f"Target vector (y) shape: {y.shape}")
         
-        return X, y
+            return X, y
+        else:
+            return df_features
     
 if __name__ == '__main__':
         from src.data.data_processor import AirQualityProcessor
