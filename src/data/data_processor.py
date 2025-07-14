@@ -1,5 +1,11 @@
-import pandas as pd
+import sys
 import os
+
+project_parent_path = os.path.abspath(os.getcwd())
+if project_parent_path not in sys.path:
+    sys.path.insert(0, project_parent_path)
+
+import pandas as pd
 from src.utils.config import RAW_DATA_PATH
 
 class AirQualityProcessor:
@@ -22,11 +28,20 @@ class AirQualityProcessor:
         self.start_date = start_date
         self.end_date = end_date
 
+        self._raw_df = None # Initialize a cached raw DataFrame
+
     def load_raw_data(self) -> pd.DataFrame:
         """
         Loads the raw Air Quality UCI dataset with correct parsing for Date/Time,
         missing values, and decimal separators.
+        Caches the loaded DataFrame to avoid repeated loading.
         """
+
+        # Check if data is already cached
+        if self._raw_df is not None:
+            print("Using cached raw data.")
+            return self._raw_df
+
         if not os.path.exists(self.file_path):
             raise FileNotFoundError(f"Raw data file not found at: {self.file_path}. "
                                     "Please download it and place it there.")
@@ -53,12 +68,15 @@ class AirQualityProcessor:
         df.sort_index(inplace=True)                 # ensure index column is sorted
 
         print("Raw data loaded and initially parsed.")
-        return df
+        
+        # Cache the loaded DataFrame
+        self._raw_df = df
+        return self._raw_df
     
     def get_target_time_series(self) -> pd.Series:
         """
-        Loads raw data, performs initial cleaning, and extracts a specific pollutant time series,
-        filtered by date range.
+        Loads raw data (or uses cached), performs initial cleaning, and extracts 
+        a specific pollutant time series, filtered by date range.
 
         Returns:
         -----------
@@ -107,10 +125,31 @@ if __name__ == '__main__':
         start_date=START_DATE,
         end_date=END_DATE
     )
+
     try:
-        no2_series = processor_no2.get_target_time_series()
-        print("\nNO2 Series Info:")
-        no2_series.info()
+        # First call: Loads data and caches it
+        no2_series_1 = processor_no2.get_target_time_series()
+        print("\nNO2 Series 1 Info:")
+        no2_series_1.info()
+
+        # Second call: Uses cached data, much faster
+        print("\n--- Calling get_target_time_series again (should be faster) ---")
+        no2_series_2 = processor_no2.get_target_time_series()
+        print("\nNO2 Series 2 Info:")
+        no2_series_2.info()
 
     except (FileNotFoundError, ValueError, Exception) as e:
         print(f"Error for NO2(GT) processing: {e}")
+
+    print("\n--- Testing AirQualityProcessor with a new pollutant (should reload raw data) ---")
+    processor_co = AirQualityProcessor(
+        target_pollutant='CO(GT)', # Assuming this column exists in your data
+        start_date=START_DATE,
+        end_date=END_DATE
+    )
+    try:
+        co_series = processor_co.get_target_time_series()
+        print("\nCO Series Info:")
+        co_series.info()
+    except (FileNotFoundError, ValueError, Exception) as e:
+        print(f"Error for CO(GT) processing: {e}")
