@@ -127,11 +127,7 @@ def evaluate_lag_depth_effect_linregr(
             is_courselib_model=True,
             num_epochs=2000, 
             batch_size=32, 
-            #compute_metrics=True, 
-            #metrics_dict={
-            #    "RMSE": lambda y_true, y_pred: math.sqrt(mean_squared_error(y_pred, y_true)),
-            #    "MAE": mean_absolute_error
-            #}
+
         )
 
         model_results = evaluator.get_results().get(model_name, {})
