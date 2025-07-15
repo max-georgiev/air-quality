@@ -1,5 +1,7 @@
 import sys
 import os
+import pandas as pd
+import logging
 
 project_parent_path = os.path.abspath(os.getcwd())
 if project_parent_path not in sys.path:
@@ -9,125 +11,33 @@ courselib_parent_path = os.path.abspath(os.path.join(os.getcwd(), "..", "Applied
 if courselib_parent_path not in sys.path:
     sys.path.insert(0, courselib_parent_path)
 
-
+# External libraries
 from courselib.utils.metrics import mean_squared_error, mean_absolute_error
 import matplotlib.pyplot as plt
-import pandas as pd
-import numpy as np
-import math
-from src.features.feature_engineer import LagFeatureEngineer
-from src.data.data_processor import AirQualityProcessor
-from src.models.train_model_class import ModelEvaluator
-from src.models import train_model
-from src.utils.config import TARGET_POLLUTANT, START_DATE, END_DATE, LAG_DEPTH
-from courselib.models.linear_models import LinearRegression
-from courselib.optimizers import GDOptimizer
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 
-# initialize processor
-processor = AirQualityProcessor(
-        target_pollutant=TARGET_POLLUTANT,
-        start_date=START_DATE,
-        end_date=END_DATE
-    )
+# Set up logging for this module
+logger = logging.getLogger(__name__)
 
-# get time series data
-time_series = processor.get_target_time_series()
-
-# assign optimizer
-optimizer = GDOptimizer()
-
-# lag values for testing
-lag_values = (1, 2, 3, 6, 9, 12, 24, 36, 48)
-def evaluate_lag_depth_effect_mine(lag_values):
-    results = {}    # to store results
-    for lag in lag_values:
-        feature_engineer = LagFeatureEngineer(lag_depth=lag) # initialize engineer
-        df_lagged = feature_engineer.prepare_supervised_data(time_series) # get lagged matrix and vector
-
-        courselib_lr_model = LinearRegression(w=np.zeros(lag), b=0.0, optimizer=optimizer) # assign model
-
-        evaluator = ModelEvaluator(df_lagged) # initialize evaluator
-
-        evaluator.evaluate_model(
-            "Linear Regression (courselib)", 
-            courselib_lr_model, 
-            is_courselib_model=True,
-            num_epochs=2000, 
-            batch_size=32, 
-            compute_metrics=True, 
-            metrics_dict={
-                "RMSE": lambda y_true, y_pred: math.sqrt(mean_squared_error(y_pred, y_true)),
-                "MAE": mean_absolute_error
-            }
-        )
-
-        rmse = evaluator.get_metric_for_model("Linear Regression (courselib)", "rmse")
-
-        results[lag] = rmse
-    
-    plt.plot(list(results.keys()), list(results.values()), marker='o')
-    plt.xlabel("Lag Depth (k)")
-    plt.ylabel("Test RMSE")
-    plt.title("Lag Depth vs. Model Performance")
-    plt.grid(True)
-    plt.tight_layout()
-    plt.show()
-
-    return results
-
-
-evaluate_lag_depth_effect_mine(lag_values)
-
-
-
-
-def evaluate_lag_depth_effect(series, model_cls, lag_values, test_size=100):
+def plot_acf_pacf(series: pd.Series, lags: int = 48):
     """
-    Evaluate how different lag depths affect RMSE.
+    Plots ACF and PACF side by side.
 
     Parameters:
     -----------
-    series (pd.Series): Time series of the target pollutant.
-    model_cls (sklearn model): Model class (e.g. Ridge).
-    lag_values (list[int]): List of k values to test.
-    test_size (int): Number of test samples.
-
-    Returns:
-    --------
-    dict[int, float]: Mapping of lag depth to RMSE.
+    series : pd.Series
+        Target time series (must be stationary if using PACF seriously).
+    lags : int
+        Number of lags to display.
     """
-    results = {}
-
-    for k in lag_values:
-        try:
-            fe = LagFeatureEngineer(k)
-            X, y = fe.prepare_supervised_data(series)
-            X_train, X_test = X[:-test_size], X[-test_size:]
-            y_train, y_test = y[:-test_size], y[-test_size:]
-
-            model = model_cls()
-            model.fit(X_train, y_train)
-            y_pred = pd.Series(model.predict(X_test), index=y_test.index)
-
-            mse = mean_squared_error(y_test, y_pred)
-            rmse = np.sqrt(mse)
-
-            results[k] = rmse
-        except Exception as e:
-            print(f"Skipped lag={k} due to error: {e}")
-
-    # Plot
-    plt.plot(list(results.keys()), list(results.values()), marker='o')
-    plt.xlabel("Lag Depth (k)")
-    plt.ylabel("Test RMSE")
-    plt.title("Lag Depth vs. Model Performance")
-    plt.grid(True)
+    fig, axes = plt.subplots(2, 1, figsize=(12, 8))
+    plot_acf(series, lags=lags, ax=axes[0])
+    axes[0].set_title("Autocorrelation (ACF)")
+    plot_pacf(series, lags=lags, ax=axes[1])
+    axes[1].set_title("Partial Autocorrelation (PACF)")
+    plt.suptitle("Autocorrelation and Partial Autocorrelation")
     plt.tight_layout()
     plt.show()
-
-    return results
-
-
 
 def plot_error_by_time_group(y_true, y_pred, group_by='hour'):
     """
@@ -135,9 +45,12 @@ def plot_error_by_time_group(y_true, y_pred, group_by='hour'):
 
     Parameters:
     -----------
-    y_true (pd.Series): True values with datetime index.
-    y_pred (pd.Series): Predicted values with aligned datetime index.
-    group_by (str): 'hour' or 'weekday'.
+    y_true : pd.Series
+        True values with datetime index.
+    y_pred : pd.Series 
+        Predicted values with aligned datetime index.
+    group_by : str
+        'hour' or 'weekday'.
     """
     if not isinstance(y_true.index, pd.DatetimeIndex):
         raise ValueError("y_true must have a DatetimeIndex.")
