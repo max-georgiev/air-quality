@@ -119,9 +119,7 @@ if __name__ == "__main__":
                         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     
     # Import matplotlib here, as it's only used in the __main__ plotting section
-    import matplotlib.pyplot as plt
-    from src.visualization.plotting_new import plot_lag_depth_results
-    
+    from src.visualization.plotting import plot_lag_depth_results
 
     logger.info("--- Starting Model Selection Script for Lag Depth Analysis ---")
 

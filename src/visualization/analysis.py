@@ -21,7 +21,8 @@ logger = logging.getLogger(__name__)
 
 def plot_acf_pacf(series: pd.Series, lags: int = 48):
     """
-    Plots ACF and PACF side by side.
+    Plots the Autocorrelation Function (ACF) and Partial Autocorrelation Function (PACF)
+    of a time series.
 
     Parameters:
     -----------
@@ -38,6 +39,7 @@ def plot_acf_pacf(series: pd.Series, lags: int = 48):
     plt.suptitle("Autocorrelation and Partial Autocorrelation")
     plt.tight_layout()
     plt.show()
+    plt.close() # Close plot to free memory
 
 def plot_error_by_time_group(y_true, y_pred, group_by='hour'):
     """
@@ -91,3 +93,4 @@ def plot_error_by_time_group(y_true, y_pred, group_by='hour'):
     plt.grid(True, axis='y')
     plt.tight_layout()
     plt.show()
+    plt.close() # Close plot to free memory
