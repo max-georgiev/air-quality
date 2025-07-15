@@ -106,14 +106,6 @@ class AirQualityProcessor:
             raise ValueError(f"No data found for {self.target_pollutant} in the specified date range "
                              f"({self.start_date} to {self.end_date}) after cleaning.")
         
-        print(f"Data prepared for {self.target_pollutant} from {self.start_date} to {self.end_date}.")
-        print(f"Shape: {time_series.shape}, Missing values: {time_series.isnull().sum()}")
-        print("\nFirst 5 entries of prepared series:")
-        print(time_series.head())
-        print("\nLast 5 entries of prepared series:")
-        print(time_series.tail())
-
-
         return time_series
 
 # For testing:
