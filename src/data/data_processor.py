@@ -1,5 +1,11 @@
 import sys
 import os
+import logging
+
+# Setup logging for the script
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__) # Use a logger instance
 
 project_parent_path = os.path.abspath(os.getcwd())
 if project_parent_path not in sys.path:
@@ -45,13 +51,12 @@ class AirQualityProcessor:
         if not os.path.exists(self.file_path):
             raise FileNotFoundError(f"Raw data file not found at: {self.file_path}. "
                                     "Please download it and place it there.")
-        
 
         df = pd.read_csv(
             self.file_path,
-            sep=';',                                        # deliimter for the dataset
-            na_values=['-200'],                             # missing values indicator
-            decimal=','                                     # decimal separator for the dataset
+            sep=';',                # deliimter for the dataset
+            na_values=['-200'],     # missing values indicator
+            decimal=','             # decimal separator for the dataset
         )
 
         # Combine Date and Time columns into a single column to use it for indexing
@@ -67,7 +72,7 @@ class AirQualityProcessor:
         df.dropna(axis=1, how='all', inplace=True)  # drop all empty unnamed columns
         df.sort_index(inplace=True)                 # ensure index column is sorted
 
-        print("Raw data loaded and initially parsed.")
+        logger.info("Raw data loaded and initially parsed.")
         
         # Cache the loaded DataFrame
         self._raw_df = df
@@ -108,40 +113,36 @@ class AirQualityProcessor:
         
         return time_series
 
-# For testing:
+# For demonstrating its purpose when run as a main script:
 if __name__ == '__main__':
-    from src.utils.config import TARGET_POLLUTANT, START_DATE, END_DATE
-    print("--- Testing AirQualityProcessor with NO2(GT) ---")
-    processor_no2 = AirQualityProcessor(
+    from src.utils.config import TARGET_POLLUTANT, START_DATE, END_DATE, LAG_DEPTH # Import global config
+    # Use config variables to define the purpose
+    logger.info(f"--- Demonstrating AirQualityProcessor functionality ---")
+    logger.info(f"Target Pollutant: {TARGET_POLLUTANT}")
+    logger.info(f"Date Range: {START_DATE} to {END_DATE}")
+
+    processor = AirQualityProcessor(
         target_pollutant=TARGET_POLLUTANT,
         start_date=START_DATE,
         end_date=END_DATE
     )
 
     try:
-        # First call: Loads data and caches it
-        no2_series_1 = processor_no2.get_target_time_series()
-        print("\nNO2 Series 1 Info:")
-        no2_series_1.info()
+        time_series = processor.get_target_time_series()
+        logger.info(f"Successfully processed time series for {TARGET_POLLUTANT}.")
+        logger.info(f"Time Series Length: {len(time_series)}")
+        logger.info(f"Time Series Start Date: {time_series.index.min()}")
+        logger.info(f"Time Series End Date: {time_series.index.max()}")
+        logger.info("\nFirst 5 entries of the processed time series:")
+        print(time_series.head()) # Use print for the actual data output for clarity
+        logger.info("\nBasic statistics of the processed time series:")
+        print(time_series.describe()) # Use print for the actual data output for clarity
 
-        # Second call: Uses cached data, much faster
-        print("\n--- Calling get_target_time_series again (should be faster) ---")
-        no2_series_2 = processor_no2.get_target_time_series()
-        print("\nNO2 Series 2 Info:")
-        no2_series_2.info()
+    except FileNotFoundError as e:
+        logger.error(f"Error: {e}. Please ensure '{RAW_DATA_PATH}' exists.")
+    except ValueError as e:
+        logger.error(f"Data processing error: {e}")
+    except Exception as e:
+        logger.exception(f"An unexpected error occurred during data processing: {e}")
 
-    except (FileNotFoundError, ValueError, Exception) as e:
-        print(f"Error for NO2(GT) processing: {e}")
-
-    print("\n--- Testing AirQualityProcessor with a new pollutant (should reload raw data) ---")
-    processor_co = AirQualityProcessor(
-        target_pollutant='CO(GT)', # Assuming this column exists in your data
-        start_date=START_DATE,
-        end_date=END_DATE
-    )
-    try:
-        co_series = processor_co.get_target_time_series()
-        print("\nCO Series Info:")
-        co_series.info()
-    except (FileNotFoundError, ValueError, Exception) as e:
-        print(f"Error for CO(GT) processing: {e}")
+    logger.info("--- AirQualityProcessor Demonstration Finished ---")
