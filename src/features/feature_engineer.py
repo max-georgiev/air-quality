@@ -1,6 +1,20 @@
+import sys
+import os
+import logging
+
+project_parent_path = os.path.abspath(os.getcwd())
+if project_parent_path not in sys.path:
+    sys.path.insert(0, project_parent_path)
+
+# Setup logging for the script
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__) # Use a logger instance
+
 import pandas as pd
 import numpy as np
 from src.utils.config import LAG_DEPTH
+import logging
 
 class LagFeatureEngineer:
     """
@@ -56,10 +70,9 @@ class LagFeatureEngineer:
         print(f"Generating {self.lag_depth} lag features and aligning target vector...")
         
         for i in range(1, self.lag_depth + 1):
-            col_name = f'lag_{i}'
-            # Add a new column which is the original series shifted by i values downwards,
+            # Add a new column 'lag_i' which is the original series shifted by i values downwards,
             # i.e., remove the i last values of the series, corresponding to i lags
-            df[col_name] = df['Target'].shift(i)
+            df[f'lag_{i}'] = df['Target'].shift(i)
 
         # Remove all rows without values (resulting from shifting).
         # This way, in the dataframe only the lagged values remain
@@ -81,46 +94,52 @@ class LagFeatureEngineer:
             return df_features
     
 if __name__ == '__main__':
-        from src.data.data_processor import AirQualityProcessor
-        from src.utils.config import TARGET_POLLUTANT, START_DATE, END_DATE, LAG_DEPTH
-
-        print("\n--- Testing LagFeatureEngineer with AirQualityProcessor output ---")
-
-        # Get processed time series
-        processor = AirQualityProcessor(
-            target_pollutant=TARGET_POLLUTANT,
-            start_date=START_DATE,
-            end_date=END_DATE
-        )
-        try:
-            air_quality_series = processor.get_target_time_series()
-            print("\nSuccessfully retrieved target time series. Head:")
-            print(air_quality_series.head())
-
-            # Generate lagged feature matrix (X) and target (y)
-            feature_engineer = LagFeatureEngineer(lag_depth=LAG_DEPTH)
-            X, y = feature_engineer.prepare_supervised_data(air_quality_series)
-
-            print("\nGenerated Feature Matrix (X) head:")
-            print(X.head())
-            print("\nGenerated Feature Matrix (X) info:")
-            X.info()
-            print("\nGenerated Feature Matrix (X) shape:", X.shape)
-            print("\nGenerated Target Vector (y) head:")
-            print(y.head())
-            print("\nGenerated Target Vector (y) info:")
-            y.info()
-            print("\nGenerated Target Vector (y) shape:", y.shape)
-
-            # Verify alignment of X and y (e.g., last values)
-            if not X.empty and not y.empty:
-                print(f"\nLast X index: {X.index[-1]}")
-                print(f"Last y index: {y.index[-1]}")
-                if X.index.equals(y.index):
-                    print("X and y indices are perfectly aligned.")
-                else:
-                    print("WARNING: X and y indices are NOT aligned!")
-
-        except Exception as e:
-            print(f"Feature Engineering test failed: {e}")
+    from src.data.data_processor import AirQualityProcessor
+    from src.utils.config import TARGET_POLLUTANT, START_DATE, END_DATE, LAG_DEPTH # Import global config
     
+    logger.info(f"--- Demonstrating LagFeatureEngineer functionality ---")
+    logger.info(f"Using default LAG_DEPTH: {LAG_DEPTH}")
+    # Step 1: Get a sample time series using AirQualityProcessor
+    logger.info("Step 1: Retrieving sample time series for feature engineering...")
+    processor = AirQualityProcessor(
+        target_pollutant=TARGET_POLLUTANT,
+        start_date=START_DATE,
+        end_date=END_DATE
+    )
+    try:
+        air_quality_series = processor.get_target_time_series()
+        logger.info(f"Successfully retrieved time series of length {len(air_quality_series)}.")
+        logger.info("Time Series Head:\n" + str(air_quality_series.head()))
+
+        # Step 2: Initialize and use LagFeatureEngineer
+        logger.info(f"\nStep 2: Initializing LagFeatureEngineer with lag_depth={LAG_DEPTH}...")
+        feature_engineer = LagFeatureEngineer(lag_depth=LAG_DEPTH)
+        
+        # Get the lagged features and target as separate DataFrames/Series
+        X_features, y_target = feature_engineer.prepare_supervised_data(air_quality_series, return_separate=True)
+
+        # Step 3: Display results
+        logger.info("\nStep 3: Displaying generated lagged features and target...")
+        logger.info(f"Generated Feature Matrix (X) shape: {X_features.shape}")
+        logger.info(f"Generated Target Vector (y) shape: {y_target.shape}")
+        
+        logger.info("\nFirst 5 rows of Feature Matrix (X):")
+        print(X_features.head())
+        logger.info("\nFirst 5 values of Target Vector (y):")
+        print(y_target.head())
+        
+        logger.info("\nFeature Matrix (X) Info:")
+        X_features.info()
+        logger.info("\nTarget Vector (y) Info:")
+        y_target.info()
+
+        # Optional: Verify alignment
+        if not X_features.empty and not y_target.empty and X_features.index.equals(y_target.index):
+            logger.info("X and y indices are perfectly aligned, as expected.")
+        else:
+            logger.warning("WARNING: X and y indices are NOT aligned or data is empty!")
+
+    except Exception as e:
+        logger.error(f"An error occurred during feature engineering demonstration: {e}", exc_info=True)
+
+    logger.info("--- LagFeatureEngineer Demonstration Finished ---")
