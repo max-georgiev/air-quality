@@ -1,5 +1,12 @@
 import sys
 import os
+import numpy as np
+import pandas as pd
+import logging
+import math # For sqrt
+import argparse # For command-line arguments in __main__
+from typing import Dict, Callable, Tuple, Union, Any
+
 
 project_parent_path = os.path.abspath(os.getcwd())
 if project_parent_path not in sys.path:
@@ -9,16 +16,21 @@ courselib_parent_path = os.path.abspath(os.path.join(os.getcwd(), "..", "Applied
 if courselib_parent_path not in sys.path:
     sys.path.insert(0, courselib_parent_path)
 
-import numpy as np
-import pandas as pd
+# Import necessary modules (now that sys.path is correctly set)
 from courselib.utils.metrics import mean_squared_error, mean_absolute_error
 from courselib.utils.splits import train_test_split
+from courselib.models.linear_models import LinearRegression
+from courselib.optimizers import GDOptimizer
+from sklearn.linear_model import Ridge, LinearRegression as SklearnLinearRegression
+
+# Specific imports for the main block, now correctly resolved:
+from src.data.data_processor import AirQualityProcessor
 from src.features.feature_engineer import LagFeatureEngineer
-import logging
-import math # For sqrt
-from typing import Dict, Callable, Tuple, Union, Any
+from src.utils.config import TARGET_POLLUTANT, START_DATE, END_DATE, LAG_DEPTH
 
 # Set up logging for this module
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 def custom_standard_scaler(train_data: np.ndarray, test_data: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -40,6 +52,7 @@ def custom_standard_scaler(train_data: np.ndarray, test_data: np.ndarray) -> tup
     """
     if train_data.ndim == 1: # Handle 1D arrays (e.g., single feature)
         train_data = train_data.reshape(-1, 1)
+    if test_data.ndim == 1: # Ensure test data is also 2D for consistent scaling
         test_data = test_data.reshape(-1, 1)
 
     train_mean = np.mean(train_data, axis=0)
@@ -78,10 +91,6 @@ class ModelEvaluator:
         
         self.df_original = df.copy() # Store a copy of the full preprocessed DF
         self.training_data_fraction = training_data_fraction
-
-        # MODELS RESULTS INITIALIZATION
-
-        #self.models_results: Dict[str, Dict[str, Union[float, np.ndarray]]] = {}
 
         self.metrics_results: Dict[str, Dict[str, Union[float, str]]] = {} # Stores only metrics and error strings
         self.predictions_results: Dict[str, pd.Series] = {} # Stores pd.Series of predictions
@@ -123,8 +132,8 @@ class ModelEvaluator:
         # Or, more robustly, access it by column name:
         if 'lag_1' not in self.test_X_raw.columns:
             logger.warning("No 'lag_1' column found for naive baseline. Using the first feature column.")
-            # Fallback to second column if 'lag_1' is not present by name (the first is the 'Target')
-            self.naive_baseline_preds_unscaled = self.test_X_raw.iloc[:, 1].to_numpy()
+            # Fallback to first column if 'lag_1' is not present by name (the first is the 'Target')
+            self.naive_baseline_preds_unscaled = self.test_X_raw.iloc[:, 0].to_numpy()
         else:
             self.naive_baseline_preds_unscaled = self.test_X_raw['lag_1'].to_numpy()
 
@@ -138,29 +147,51 @@ class ModelEvaluator:
         Internal method to fit a given model instance to the training data.
         """
         logger.debug(f"Fitting model type: {type(model_instance).__name__}")
-        train_X_use = self.train_X_scaled
-        train_Y_use = self.train_Y_np
+
+        train_Y_fit = self.train_Y_np.reshape(-1, 1) if not is_courselib_model else self.train_Y_np
+        train_metrics: Dict[str, float] = {}
 
         if is_courselib_model:
-            model_instance.fit(train_X_use, train_Y_use, **fit_params)
+            courselib_metrics_dict = {
+                    "mse": mean_squared_error,
+                    "mae": mean_absolute_error
+                }
+            
+            metrics_history = model_instance.fit(
+                    X=self.train_X_scaled, 
+                    y=train_Y_fit, 
+                    compute_metrics=True, # <-- Enable metric computation during fit
+                    metrics_dict=courselib_metrics_dict, # <-- Pass the metrics functions
+                    **fit_params
+                )
+            
+            for metric_name, values in metrics_history.items():
+                train_metrics[metric_name] = values[-1]
+            train_metrics["rmse"] = math.sqrt(train_metrics["mse"]) # Calculate RMSE
+
         else:
-            model_instance.fit(train_X_use, train_Y_use)
+            model_instance.fit(self.train_X_scaled, train_Y_fit)
+            # Manually compute training metrics for scikit-learn models
+            train_y_pred = model_instance.predict(self.train_X_scaled)
+            if train_y_pred.ndim > 1:
+                train_y_pred = train_y_pred.flatten()
+            train_metrics = self._calculate_metrics(self.train_Y_np, train_y_pred)
         
         logger.info(f"Model {type(model_instance).__name__} trained successfully.")
         
-        return model_instance
+        return model_instance, train_metrics
 
     def _predict_model(self, fitted_model, is_courselib_model: bool) -> np.ndarray:
         """
         Internal method to generate predictions on the test data using a fitted model.
         """
         logger.debug(f"Generating predictions for model type: {type(fitted_model).__name__}")
-        test_X_use = self.test_X_scaled
+        
 
         if is_courselib_model:
-            y_pred = fitted_model.decision_function(test_X_use)
+            y_pred = fitted_model.decision_function(self.test_X_scaled)
         else:
-            y_pred = fitted_model.predict(test_X_use)
+            y_pred = fitted_model.predict(self.test_X_scaled)
             
         logger.info(f"Predictions generated for {type(fitted_model).__name__}.")
         return y_pred
@@ -176,21 +207,37 @@ class ModelEvaluator:
         
         return calculated_metrics
 
-    def evaluate_model(self, model_name: str, model_instance, is_courselib_model: bool = False, **fit_params):
+    def evaluate_model(self, model_name: str, model_config: Dict[str, Any]):
         """
-        Trains, predicts, and evaluates a single model using the pre-prepared train/test data. 
-        Metrics computed are MSE, MAE and RMSE
+        Trains, predicts, and evaluates a single model given its configuration.
+        Metrics computed are MSE, MAE and RMSE.
         
         Parameters:
-        - model_name (str): A unique name for this model (e.g., 'Courselib LR', 'Sklearn Ridge').
-        - model_instance: An instantiated model object (e.g., LinearRegression(), Ridge(alpha=1.0)).
-        - is_courselib_model (bool): True if it's a courselib model requiring specific fit params.
-        - **fit_params: Additional parameters to pass to the model's fit method.
+        - model_name (str): A unique name for the model.
+        - model_config (Dict[str, Any]): A dictionary containing model configuration,
+                                         including 'model_class', 'is_courselib_model',
+                                         'init_params', 'fit_params', and potentially 'optimizer'
+                                         for courselib LinRegr model.
         """
         logger.info(f"--- Starting evaluation for {model_name} ---")
+
+        
+        model_class = model_config['model_class']
+        is_courselib_model = model_config.get('is_courselib_model', False)
+        init_params = model_config.get('init_params', {})
+        fit_params = model_config.get('fit_params', {})
+
+        if is_courselib_model:
+            num_features = self.train_X_scaled.shape[1]
+            optimizer_instance = model_config.get('optimizer') # Get pre-instantiated optimizer
+            model_instance = model_class(w=np.zeros(num_features), b=0.0, optimizer=optimizer_instance)
+        else:
+            # For scikit-learn models
+            model_instance = model_class(**init_params)
+        
         try:
             # Fit the model and get training history
-            fitted_model = self._fit_model(model_instance, is_courselib_model, **fit_params)
+            fitted_model, train_metrics = self._fit_model(model_instance, is_courselib_model, **fit_params)
 
             # Generate predictions on the test set
             y_pred = self._predict_model(fitted_model, is_courselib_model)
@@ -199,15 +246,20 @@ class ModelEvaluator:
             # Calculate test set metrics
             test_metrics = self._calculate_metrics(self.test_Y_np, y_pred)
             
-            # Store results
-            self.metrics_results[model_name] = test_metrics
+            # Store results: Combine train and test metrics
+            full_metrics = {f'train_{k}': v for k, v in train_metrics.items()}
+            full_metrics.update(test_metrics)
+            
+            self.metrics_results[model_name] = full_metrics # Store combined metrics
             self.predictions_results[model_name] = y_pred_series
             self.trained_models[model_name] = fitted_model
             
-            # Log metrics
+            # Log metrics (adjusting for both train and test)
+            train_metric_log_str = ", ".join([f"Train {k.upper()}: {v:.4f}" 
+                                               for k, v in train_metrics.items() if k in ['mse', 'mae', 'rmse']])
             test_metric_log_str = ", ".join([f"Test {k.upper()}: {v:.4f}" 
-                                              for k, v in test_metrics.items() if k in ['mse', 'mae', 'rmse']])
-            logger.info(f"Model {model_name} - {test_metric_log_str}")
+                                             for k, v in test_metrics.items() if k in ['mse', 'mae', 'rmse']])
+            logger.info(f"Model {model_name} - {train_metric_log_str} | {test_metric_log_str}")
 
             logger.info(f"--- Finished evaluation for {model_name} ---")
 
@@ -244,11 +296,12 @@ class ModelEvaluator:
         """
         return self.metrics_results
 
-    def get_metric_for_model(self, model_name: str, metric_name: str):
+    def get_metric_for_model(self, model_name: str, metric_name: str, is_train_metric=False):
         """
         Returns a specific metric for a specific model.
         """
-        return self.metrics_results.get(model_name, {}).get(metric_name)
+        key = f"train_{metric_name}" if is_train_metric else metric_name
+        return self.metrics_results.get(model_name, {}).get(key)
 
     def get_test_Y_series(self) -> pd.Series:
         """Returns the true test values as a pandas Series with its original DateTimeIndex."""
@@ -283,121 +336,108 @@ class ModelEvaluator:
 # Updated Main Execution Block (if __name__ == "__main__":)
 # =============================================================================
 if __name__ == "__main__":
+    # Logging configuration for standalone script execution
     logging.basicConfig(level=logging.INFO,
                         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     
-    # Import necessary modules for the standalone script execution
-    from src.data.data_processor import AirQualityProcessor
-    from src.features.feature_engineer import LagFeatureEngineer
-    from src.utils.config import TARGET_POLLUTANT, START_DATE, END_DATE, LAG_DEPTH
-    from src.visualization.analysis import plot_error_by_time_group, plot_predictions_vs_actual, plot_acf_pacf
+    logger.info("--- Starting Model Training Script ---")
 
-    from courselib.models.linear_models import LinearRegression
-    from courselib.optimizers import GDOptimizer
-    from sklearn.linear_model import LinearRegression as SklearnLinearRegression
-    from sklearn.linear_model import Ridge
+    # Define available model configurations with default hyperparams
+    ALL_MODEL_CONFIGURATIONS = {
+        "courselib_lr": {
+            "model_class": LinearRegression,
+            "is_courselib_model": True,
+            "optimizer": GDOptimizer(learning_rate=0.001), # Default learning rate
+            "fit_params": {"num_epochs": 1000, "batch_size": 32} # Default fit params
+        },
+        "sklearn_lr": {
+            "model_class": SklearnLinearRegression,
+            "is_courselib_model": False,
+            "init_params": {}
+        },
+        "sklearn_ridge": {
+            "model_class": Ridge,
+            "is_courselib_model": False,
+            "init_params": {"alpha": 1.0} # Default alpha
+        }
+    }
 
-    logger.info("--- Starting Model Evaluation Script ---")
+    # Setup argument parser for command-line execution
+    parser = argparse.ArgumentParser(description="Train a specified regression model using lagged air quality data.")
+    parser.add_argument("--model", type=str, required=True, choices=ALL_MODEL_CONFIGURATIONS.keys(),
+                        help=f"Name of the model to train. Choose from: {', '.join(ALL_MODEL_CONFIGURATIONS.keys())}")
+    parser.add_argument("--lag_depth", type=int, default=LAG_DEPTH,
+                        help=f"Lag depth for feature engineering. Default: {LAG_DEPTH}")
+    # Arguments for courselib_lr
+    parser.add_argument("--learning_rate", type=float, default=0.001,
+                        help="Learning rate for courselib_lr model. Default: 0.001")
+    parser.add_argument("--num_epochs", type=int, default=1000,
+                        help="Number of training epochs for courselib_lr model. Default: 1000")
+    # Argument for sklearn_ridge
+    parser.add_argument("--alpha", type=float, default=1.0,
+                        help="Alpha (regularization strength) for sklearn_ridge model. Default: 1.0")
 
-    # Create dummy config for direct execution if not available
-    if 'TARGET_POLLUTANT' not in locals():
-        TARGET_POLLUTANT = "PM2.5"
-        START_DATE = "2023-01-01"
-        END_DATE = "2023-01-31"
-        LAG_DEPTH = 5
-        logger.warning("Using dummy config for standalone script execution.")
+    args = parser.parse_args()
 
+    # --- Data Preparation ---
+    # This minimal setup ensures the script is runnable as a standalone.
+    # In a full pipeline, data might be loaded from pre-processed files.
+    try:
+        processor = AirQualityProcessor(
+            target_pollutant=TARGET_POLLUTANT,
+            start_date=START_DATE,
+            end_date=END_DATE
+        )
+        time_series = processor.get_target_time_series()
+        logger.info("AirQualityProcessor completed for data generation.")
 
-    processor = AirQualityProcessor(
-        target_pollutant=TARGET_POLLUTANT,
-        start_date=START_DATE,
-        end_date=END_DATE
-    )
-    time_series = processor.get_target_time_series()
-    logger.info("AirQualityProcessor completed.")
+        feature_engineer = LagFeatureEngineer(lag_depth=args.lag_depth)
+        df_lagged_features = feature_engineer.prepare_supervised_data(time_series, return_separate=False)
+        logger.info(f"LagFeatureEngineer completed with lag_depth={args.lag_depth}. DataFrame shape: {df_lagged_features.shape}")
 
-    logger.info("\n--- Plotting Autocorrelation (ACF) and Partial Autocorrelation (PACF) ---")
-    plot_acf_pacf(time_series, lags=LAG_DEPTH * 2, title="ACF and PACF of Target Time Series")
-    logger.info(f"ACF/PACF plot generated to help justify LAG_DEPTH={LAG_DEPTH}.")
+        # Initialize ModelEvaluator with the prepared data
+        evaluator = ModelEvaluator(df_lagged_features, training_data_fraction=0.8)
+        logger.info("ModelEvaluator initialized with data splits.")
+    except Exception as e:
+        logger.error(f"Error during data preparation or ModelEvaluator initialization: {e}", exc_info=True)
+        sys.exit(1) # Exit if data setup fails
 
-    feature_engineer = LagFeatureEngineer(lag_depth=LAG_DEPTH)
-    df_lagged_features = feature_engineer.prepare_supervised_data(time_series, return_separate=False)
-    logger.info("LagFeatureEngineer completed.")
-    logger.info(f"Prepared DataFrame for ModelEvaluator shape: {df_lagged_features.shape}")
-
-    evaluator = ModelEvaluator(df_lagged_features, training_data_fraction=0.8)
-    logger.info("ModelEvaluator initialized with data splits.")
+    # --- Model Training and Evaluation ---
+    model_name_to_train = args.model
+    model_config = ALL_MODEL_CONFIGURATIONS[model_name_to_train]
     
-    # Courserlib Linear Regression
-    optimizer = GDOptimizer(learning_rate=0.0001)
-    courselib_lr_model = LinearRegression(w=np.zeros(LAG_DEPTH), b=0.0, optimizer=optimizer)
-    evaluator.evaluate_model(
-        "Linear Regression (courselib)", 
-        courselib_lr_model, 
-        is_courselib_model=True,
-        num_epochs=2000, 
-        batch_size=32
-    )
+    # Override hyperparameters based on command-line arguments for the selected model
+    if model_name_to_train == "courselib_lr":
+        model_config["optimizer"] = GDOptimizer(learning_rate=args.learning_rate)
+        model_config["fit_params"]["num_epochs"] = args.num_epochs
+    elif model_name_to_train == "sklearn_ridge":
+        model_config["init_params"]["alpha"] = args.alpha
     
-    # Scikit-learn Linear Regression
-    sklearn_lr_model = SklearnLinearRegression()
-    evaluator.evaluate_model("Scikit-learn Linear Regression", sklearn_lr_model)
+    # Train and evaluate the specified model
+    evaluator.evaluate_model(model_name_to_train, model_config)
 
-    # Scikit-learn Ridge Regression
-    ridge_model = Ridge(alpha=1.0) 
-    evaluator.evaluate_model("Scikit-learn Ridge Regression", ridge_model)
+    # --- Print Final Metrics for the Trained Model ---
+    trained_model_metrics = evaluator.get_metrics_results().get(model_name_to_train)
+    if trained_model_metrics and 'error' not in trained_model_metrics:
+        logger.info(f"\n--- Final Metrics for Trained Model: {model_name_to_train} ---")
+        train_mse = trained_model_metrics.get('train_mse')
+        train_mae = trained_model_metrics.get('train_mae')
+        train_rmse = trained_model_metrics.get('train_rmse')
+        test_mse = trained_model_metrics.get('mse')
+        test_mae = trained_model_metrics.get('mae')
+        test_rmse = trained_model_metrics.get('rmse')
 
-    # Naive Baseline
-    evaluator.evaluate_naive_baseline()
-
-    # --- REVISED: Call get_metrics_results ---
-    all_metrics_results = evaluator.get_metrics_results()
-    logger.info("\n--- Summary of All Model Metrics Results ---")
-    for model_name, metrics_data in all_metrics_results.items():
-        test_metric_summary = ", ".join([f"Test {k.upper()}={v:.4f}" 
-                                         for k, v in metrics_data.items() 
-                                         if k in ["mse", "mae", "rmse"] and isinstance(v, (int, float))])
-        if "error" in metrics_data:
-            test_metric_summary += f", Error: {metrics_data['error']}"
-        
-        logger.info(f"{model_name}: {test_metric_summary}")
-    # --- END REVISED ---
-
-    # --- Plot Error by Time Group ---
-    y_test_series_for_plot = evaluator.get_test_Y_series()
-    
-    y_pred_courselib_series = evaluator.get_predictions_series_for_model("Linear Regression (courselib)")
-    if not y_pred_courselib_series.empty:
-        logger.info("\nPlotting error by hour for Linear Regression (courselib)...")
-        plot_error_by_time_group(y_test_series_for_plot, y_pred_courselib_series, group_by='hour')
+        if train_rmse is not None: # Check if training metrics were recorded
+            logger.info(f"Train RMSE: {train_rmse:.4f}")
+            logger.info(f"Train MAE: {train_mae:.4f}")
+            logger.info(f"Train MSE: {train_mse:.4f}")
+        if test_rmse is not None:
+            logger.info(f"Test RMSE: {test_rmse:.4f}")
+            logger.info(f"Test MAE: {test_mae:.4f}")
+            logger.info(f"Test MSE: {test_mse:.4f}")
+    elif trained_model_metrics and 'error' in trained_model_metrics:
+        logger.error(f"Training for {model_name_to_train} failed: {trained_model_metrics['error']}")
     else:
-        logger.warning("No predictions available for Linear Regression (courselib) for plotting.")
-    
-    y_pred_ridge_series = evaluator.get_predictions_series_for_model("Scikit-learn Ridge Regression")
-    if not y_pred_ridge_series.empty:
-        logger.info("\nPlotting error by weekday for Scikit-learn Ridge Regression...")
-        plot_error_by_time_group(y_test_series_for_plot, y_pred_ridge_series, group_by='weekday')
-    else:
-        logger.warning("No predictions available for Scikit-learn Ridge Regression for plotting.")
-    
-    # --- Plot Predictions vs. Actual ---
-    logger.info("\n--- Plotting Predictions vs. Actual Values ---")
-    if not y_pred_ridge_series.empty:
-        logger.info(f"\nPlotting Actual vs. Predicted for Scikit-learn Ridge Regression...")
-        plot_predictions_vs_actual(y_test_series_for_plot, y_pred_ridge_series, model_name="Scikit-learn Ridge Regression")
-    else:
-        logger.warning("No predictions available for Scikit-learn Ridge Regression for plotting Actual vs. Predicted.")
+        logger.error(f"No metrics available for model: {model_name_to_train}. Training might have failed or model name is incorrect.")
 
-    logger.info("\n--- Retrieving Trained Models (Example) ---")
-    retrieved_lr = evaluator.get_trained_model("Linear Regression (courselib)")
-    if retrieved_lr:
-        logger.info(f"Retrieved Courselib LR model: {type(retrieved_lr).__name__}")
-    
-    retrieved_ridge = evaluator.get_trained_model("Scikit-learn Ridge Regression")
-    if retrieved_ridge:
-        logger.info(f"Retrieved Scikit-learn Ridge model: {type(retrieved_ridge).__name__}")
-        if hasattr(retrieved_ridge, 'coef_'):
-            logger.info(f"Ridge Coefficients (first 5): {retrieved_ridge.coef_[:5]}")
-
-
-    logger.info("--- Model Evaluation Script Finished ---")
+    logger.info("--- Model Training Script Finished ---")
