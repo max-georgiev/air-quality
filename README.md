@@ -1,8 +1,8 @@
 # Forecasting Air Quality with Linear Autoregressive Models
 
-This repository contains the implementation for a final project in Applied Machine Learning, focusing on forecasting air quality (specifically NO2 levels) using linear autoregressive models. The project explores time series regression, autocorrelation, and the impact of regularization.
+This repository contains the implementation for a final project of the *Applied Machine Learning in Python* course at LMU Munich, Summer Semester 2025. It focuses on forecasting air quality (specifically NO2 levels) using linear autoregressive models.  
+It builds on materials from [AppliedML](https://github.com/max-georgiev/AppliedML), a fork of the original course repository by [@mselezniova](https://github.com/mselezniova/AppliedML).
 
->📋  Optional: include a graphic explaining your approach/main result, bibtex entry, link to demos, blog posts and tutorials
 
 ## Requirements
 
@@ -21,63 +21,78 @@ To install the required packages:
 pip install -r requirements.txt
 ```
 
+> **Note:** This project also depends on components from a [forked version of max-georgiev's repo](https://github.com/max-georgiev/AppliedML). Please make sure to clone that repository and use it alongside this one, as it provides essential utility functions and `__init__.py` files for modular imports.
+
 ## Data
 
-This project utilizes the **UCI Air Quality Dataset**.
+This project uses the UCI Air Quality Dataset, originally from the [UCI ML Repository](https://archive.ics.uci.edu/ml/datasets/Air+Quality).
 
-**Download and Setup:**
-1. Navigate to the [UCI ML Repository - Air Quality page](https://archive.ics.uci.edu/ml/datasets/Air+Quality).
-2. Download the `AirQualityUCI.zip` file.
-3. Extract the contents of the zip file.
-4. Place the `AirQualityUCI.csv` file into the `data/raw/` directory within the root of this repository.
+The dataset (`AirQualityUCI.csv`) is already included under `data/raw/`, so no manual download is necessary.
 
-*Note: The `AirQualityUCI.csv` file is included in this repository for convenience. However, for larger datasets, a download instruction would be the primary method.*
+____________________________________________________________
 
->📋  Describe how to set up the environment, e.g. pip/conda/docker commands, download datasets, etc...
+
+
 
 ## Training
 
-To train the model(s) in the paper, run this command:
 
-```train
-python train.py --input-data <path_to_data> --alpha 10 --beta 20
-```
+To train a model for forecasting pollutant levels (e.g., NO₂), first ensure you’ve set the correct configuration in src/utils/config.py, including:
 
->📋  Describe how to train the models, with example commands on how to train the models in your paper, including the full training procedure and appropriate hyperparameters.
+TARGET_POLLUTANT (e.g., 'NO2(GT)')
 
-## Evaluation
+START_DATE and END_DATE
 
-To evaluate my model on ImageNet, run:
+LAG_DEPTH (e.g., 24)
 
-```eval
-python eval.py --model-file mymodel.pth --benchmark imagenet
-```
 
->📋  Describe how to evaluate the trained models on benchmarks reported in the paper, give commands that produce the results (section below).
+To train and evaluate the models for pollutant forecasting (e.g., NO₂), open and run the following Jupyter notebook:
 
-## Pre-trained Models
+`src/notebooks/main.ipynb`
 
-You can download pretrained models here:
+This notebook performs the full pipeline:
 
-- [My awesome model](https://drive.google.com/mymodel.pth) trained on ImageNet using parameters x,y,z. 
+- Data loading and preprocessing  
+- Lagged feature engineering (e.g., using past 24 values)  
+- Model training (e.g., gradient descent, ridge regression)  
+- Evaluation using MSE, RMSE, and MAE  
+- Visualizations such as:
+  - Prediction vs. actual values  
+  - Residual analysis  
+  - ACF/PACF plots  
+  - MAE by hour of day or weekday  
+  - Model coefficient interpretation
 
->📋  Give a link to where/how the pretrained models can be downloaded and how they were trained (if applicable).  Alternatively you can have an additional column in your results table with a link to the models.
+
+
+
+
 
 ## Results
 
-Our model achieves the following performance on :
+The table below shows example test results from forecasting NO₂ (GT) levels using different models and lag depths.  
+A lag depth of 24 yielded the best performance. Larger depths (e.g., 48) slightly increased test error, likely due to overfitting.
 
-### [Image Classification on ImageNet](https://paperswithcode.com/sota/image-classification-on-imagenet)
+| Lag Depth | Model                         | MSE    | MAE    | RMSE   |
+|-----------|-------------------------------|--------|--------|--------|
+| 1         | Courselib LR (GD 0.001)       | 149.70 | 13.39  | 12.24  |
+| 1         | Scikit-learn Ridge (α = 0.1)  | 149.71 | 13.39  | 12.24  |
+| 2         | Courselib LR (GD 0.001)       | 137.37 | 13.01  | 11.72  |
+| 2         | Scikit-learn Ridge (α = 0.1)  | 137.37 | 13.01  | 11.72  |
+| 24        | Courselib LR (GD 0.001)       | 137.27 | 12.99  | 11.72  |
+| 24        | Scikit-learn Ridge (α = 1.0)  | 137.42 | 13.01  | 11.72  |
+| 24        | **Scikit-learn Ridge (α = 0.1)** | **137.25** | **12.99** | **11.72** |
+| 48        | Courselib LR (GD 0.001)       | 140.03 | 12.98  | 11.83  |
+| 48        | Scikit-learn Ridge (α = 0.1)  | 140.07 | 12.98  | 11.84  |
 
-| Model name         | Top 1 Accuracy  | Top 5 Accuracy |
-| ------------------ |---------------- | -------------- |
-| My awesome model   |     85%         |      95%       |
+Overall, linear autoregressive models, especially ridge regression, performed well for short-term air quality prediction.  
+The best-performing model (scikit-learn Ridge with α = 0.1) slightly outperformed both the course-provided gradient descent model and Ridge with α = 1.0.
 
->📋  Include a table of results from your paper, and link back to the leaderboard for clarity and context. If your main result is a figure, include that figure and link to the command or notebook to reproduce it. 
+*Example plots (predicted vs actual, error by hour, coefficient weights, etc.) can be found in [`notebooks/main.ipynb`](notebooks/main.ipynb).  
+The notebook also contains additional analysis and visual reasoning used to guide model selection.*
+
 
 
 ## Contributing
 
 This project is licensed under the Apache License 2.0. See the `LICENSE` file for details.
-
->📋  Pick a licence and describe how to contribute to your code repository. 
